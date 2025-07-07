@@ -2,3 +2,5 @@
 /.env
 /logs
 /sessions
+/docker-compose.yml
+/Dockerfile

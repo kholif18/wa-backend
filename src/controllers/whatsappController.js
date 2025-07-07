@@ -19,6 +19,11 @@ const {
 
 const clients = new Map();
 const qrCodes = new Map();
+let io = null;
+
+export function setSocketInstance(socketIoInstance) {
+    io = socketIoInstance;
+}
 
 export async function startSession(req, res) {
     const sessionId = req.body.session;
@@ -59,17 +64,27 @@ export async function startSession(req, res) {
         status: 'starting'
     };
 
+    if (io) io.to(sessionId).emit('session:update', {
+        session: sessionId,
+        status: 'starting'
+    });
+
     client.on('qr', async (qr) => {
         try {
             const qrImage = await qrcode.toDataURL(qr);
             qrCodes.set(sessionId, qrImage);
 
-            // ✅ Update status session
             if (global.sessions[sessionId]) {
                 global.sessions[sessionId].status = 'qr';
             }
 
-            console.log(`✅ QR disimpan untuk ${sessionId}`);
+            if (io) io.to(sessionId).emit('session:qr', {
+                session: sessionId,
+                qr: qrImage
+            });
+
+            console.log(`✅ QR dikirim via socket untuk ${sessionId}`);
+
             setTimeout(() => {
                 qrCodes.delete(sessionId);
                 console.log(`🗑 QR expired untuk ${sessionId}`);
@@ -78,16 +93,25 @@ export async function startSession(req, res) {
             console.error(`❌ Gagal generate QR:`, err);
         }
     });
-    
 
     client.on('ready', () => {
         global.sessions[sessionId].status = 'connected';
+        if (io) io.to(sessionId).emit('session:update', {
+            session: sessionId,
+            status: 'connected'
+        });
+        console.log(`🔌 Session ${sessionId} connected`);
     });
 
     client.on('auth_failure', msg => {
         global.sessions[sessionId].status = 'auth_failure';
+        if (io) io.to(sessionId).emit('session:update', {
+            session: sessionId,
+            status: 'auth_failure'
+        });
         clients.delete(sessionId);
         qrCodes.delete(sessionId);
+        console.warn(`❌ Auth failure: ${msg}`);
     });
 
     client.on('disconnected', async (reason) => {
@@ -96,18 +120,26 @@ export async function startSession(req, res) {
             if (global.sessions[sessionId]) {
                 global.sessions[sessionId].status = 'disconnected';
             }
+
+            if (io) io.to(sessionId).emit('session:update', {
+                session: sessionId,
+                status: 'disconnected',
+                reason
+            });
+
             await client.destroy();
         } catch (e) {
             console.error(`❌ Gagal destroy client ${sessionId}:`, e);
         }
+
         clients.delete(sessionId);
         qrCodes.delete(sessionId);
 
-        // Auto-restart jika logout bukan karena user
         if (reason !== 'LOGOUT') {
+            console.log(`🔁 Restarting session ${sessionId} in 5s...`);
             setTimeout(() => {
                 startSession({
-                    query: {
+                    body: {
                         session: sessionId
                     }
                 }, {
@@ -115,7 +147,7 @@ export async function startSession(req, res) {
                 });
             }, 5000);
         } else {
-            console.log(`🚫 Tidak restart karena user logout manual`);
+            console.log(`🚫 Logout manual oleh user, tidak restart`);
         }
     });
 
@@ -131,45 +163,6 @@ export async function startSession(req, res) {
             error: 'Gagal memulai sesi'
         });
     }
-}
-
-export async function getQR(req, res) {
-    const sessionId = req.query.session;
-    const qr = qrCodes.get(sessionId);
-    if (!qr) return res.status(400).json({
-        error: 'QR tidak tersedia'
-    });
-    res.json({
-        qr
-    });
-}
-
-export const getQRImage = async (req, res) => {
-    const sessionId = req.query.session;
-    const qr = qrCodes.get(sessionId);
-
-    console.log(`📷 Get QR image for ${sessionId}`);
-
-    if (!qr) return res.status(400).send('QR tidak tersedia');
-
-    const base64Data = qr.replace(/^data:image\/png;base64,/, '');
-    const imgBuffer = Buffer.from(base64Data, 'base64');
-
-    res.setHeader('Content-Type', 'image/png');
-    res.send(imgBuffer);
-};
-
-export async function getStatus(req, res) {
-    const sessionId = req.query.session;
-    const session = global.sessions[sessionId];
-
-    if (!session) return res.json({
-        status: 'offline'
-    });
-
-    res.json({
-        status: session.status || 'unknown'
-    });
 }
 
 export async function sendMessage(req, res) {
@@ -359,4 +352,71 @@ export async function sendGroupMessage(req, res) {
             detail: err.message
         });
     }
+}
+
+export async function listSessions(req, res) {
+    const sessions = Object.keys(global.sessions).map((id) => ({
+        session: id,
+        status: global.sessions[id]?.status || 'unknown'
+    }));
+
+    res.json(sessions);
+}
+
+export async function sendBulkMessage(req, res) {
+    const {
+        session,
+        messages,
+        delay = 1000
+    } = req.body;
+
+    if (!session || !Array.isArray(messages)) {
+        return res.status(400).json({
+            error: 'Session dan daftar messages diperlukan'
+        });
+    }
+
+    if (!clients.has(session)) {
+        return res.status(400).json({
+            error: 'Session tidak ditemukan'
+        });
+    }
+
+    const client = clients.get(session);
+    const results = [];
+
+    for (const {
+            phone,
+            message
+        } of messages) {
+        if (!isValidPhoneNumber(phone, 'ID')) {
+            results.push({
+                phone,
+                success: false,
+                error: 'Nomor tidak valid'
+            });
+            continue;
+        }
+
+        try {
+            await client.sendMessage(`${phone}@c.us`, message);
+            results.push({
+                phone,
+                success: true
+            });
+        } catch (err) {
+            results.push({
+                phone,
+                success: false,
+                error: err.message
+            });
+        }
+
+        // Delay antar pesan
+        await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    res.json({
+        results
+    });
 }
