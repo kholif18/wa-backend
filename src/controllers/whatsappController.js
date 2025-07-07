@@ -2,7 +2,11 @@ import pkg from 'whatsapp-web.js';
 import qrcode from 'qrcode';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import axios from 'axios';
 import path from 'path';
+import {
+    logToGateway
+} from '../services/logService.js';
 import {
     isValidPhoneNumber
 } from 'libphonenumber-js';
@@ -69,6 +73,28 @@ export async function startSession(req, res) {
         status: 'starting'
     });
 
+    client.on('message', async (msg) => {
+        const webhookUrl = process.env.WEBHOOK_URL;
+        if (!webhookUrl) return;
+
+        const payload = {
+            session: sessionId,
+            from: msg.from,
+            to: msg.to || sessionId,
+            body: msg.body,
+            type: msg.type,
+            timestamp: msg.timestamp,
+            isGroupMsg: msg.from.endsWith('@g.us'),
+        };
+
+        try {
+            await axios.post(webhookUrl, payload);
+            console.log(`📬 Webhook dikirim ke ${webhookUrl}`);
+        } catch (err) {
+            console.error('❌ Gagal kirim webhook:', err.message);
+        }
+    });
+    
     client.on('qr', async (qr) => {
         try {
             const qrImage = await qrcode.toDataURL(qr);
@@ -191,6 +217,13 @@ export async function sendMessage(req, res) {
     try {
         const client = clients.get(session);
         await client.sendMessage(`${phone}@c.us`, message);
+        await logToGateway({
+            session,
+            phone,
+            message,
+            type: 'text',
+            status: 'success'
+        });
         res.json({
             success: true
         });
@@ -200,8 +233,137 @@ export async function sendMessage(req, res) {
         fs.appendFileSync('logs/messages.log', `[${new Date().toISOString()}] ${session} -> ${phone}: ${message}\n`);
     } catch (err) {
         console.error(`❌ Gagal kirim pesan untuk ${session}:`, err);
+        await logToGateway({
+            session,
+            phone,
+            message,
+            type: 'text',
+            status: 'failed'
+        });
         res.status(500).json({
             error: 'Gagal mengirim pesan',
+            detail: err.message
+        });
+    }
+}
+
+export async function sendMedia(req, res) {
+    const {
+        session,
+        phone,
+        fileUrl,
+        caption
+    } = req.body;
+
+    // Validasi input
+    if (!session || !phone || !fileUrl) {
+        return res.status(400).json({
+            error: 'Session, phone, dan fileUrl diperlukan'
+        });
+    }
+    if (!isValidPhoneNumber(phone, 'ID')) { // Ganti 'ID' dengan kode negara yang sesuai
+        return res.status(400).json({
+            error: 'Nomor telepon tidak valid'
+        });
+    }
+
+    if (!clients.has(session)) {
+        return res.status(400).json({
+            error: 'Session tidak ditemukan'
+        });
+    }
+
+    try {
+        const client = clients.get(session);
+
+        const media = await MessageMedia.fromUrl(fileUrl);
+        await client.sendMessage(`${phone}@c.us`, media, {
+            caption
+        });
+
+        // Simpan log pengiriman jika perlu
+        console.log(`📎 Media dikirim ke ${phone}: ${fileUrl}`);
+        await logToGateway({
+            session,
+            phone,
+            message,
+            type: 'text',
+            status: 'success'
+        });
+        res.json({
+            success: true
+        });
+    } catch (err) {
+        console.error(`❌ Gagal kirim media:`, err);
+        await logToGateway({
+            session,
+            phone,
+            message,
+            type: 'text',
+            status: 'failed'
+        });
+        res.status(500).json({
+            error: 'Gagal mengirim media',
+            detail: err.message
+        });
+    }
+}
+
+export async function sendGroupMessage(req, res) {
+    const {
+        session,
+        groupName,
+        message
+    } = req.body;
+
+    // Validasi input
+    if (!session || !groupName || !message) {
+        return res.status(400).json({
+            error: 'Session, groupName, dan message diperlukan'
+        });
+    }
+
+    if (!clients.has(session)) {
+        return res.status(400).json({
+            error: 'Session tidak ditemukan'
+        });
+    }
+
+    try {
+        const client = clients.get(session);
+        const chats = await client.getChats();
+        const group = chats.find(chat => chat.isGroup && chat.name === groupName);
+
+        if (!group) {
+            return res.status(404).json({
+                error: `Grup "${groupName}" tidak ditemukan`
+            });
+        }
+
+        await group.sendMessage(message);
+
+        console.log(`💬 Pesan dikirim ke grup "${groupName}": ${message}`);
+        await logToGateway({
+            session,
+            phone,
+            message,
+            type: 'text',
+            status: 'success'
+        });
+        res.json({
+            success: true
+        });
+    } catch (err) {
+        console.error(`❌ Gagal kirim ke grup:`, err);
+        await logToGateway({
+            session,
+            phone,
+            message,
+            type: 'text',
+            status: 'failed'
+        });
+        res.status(500).json({
+            error: 'Gagal kirim ke grup',
             detail: err.message
         });
     }
@@ -254,101 +416,6 @@ export async function logoutSession(req, res) {
         console.error(`❌ Gagal logout session ${sessionId}:`, err);
         res.status(500).json({
             error: 'Gagal logout session',
-            detail: err.message
-        });
-    }
-}
-
-export async function sendMedia(req, res) {
-    const {
-        session,
-        phone,
-        fileUrl,
-        caption
-    } = req.body;
-
-    // Validasi input
-    if (!session || !phone || !fileUrl) {
-        return res.status(400).json({
-            error: 'Session, phone, dan fileUrl diperlukan'
-        });
-    }
-    if (!isValidPhoneNumber(phone, 'ID')) { // Ganti 'ID' dengan kode negara yang sesuai
-        return res.status(400).json({
-            error: 'Nomor telepon tidak valid'
-        });
-    }
-
-    if (!clients.has(session)) {
-        return res.status(400).json({
-            error: 'Session tidak ditemukan'
-        });
-    }
-
-    try {
-        const client = clients.get(session);
-
-        const media = await MessageMedia.fromUrl(fileUrl);
-        await client.sendMessage(`${phone}@c.us`, media, {
-            caption
-        });
-
-        // Simpan log pengiriman jika perlu
-        console.log(`📎 Media dikirim ke ${phone}: ${fileUrl}`);
-
-        res.json({
-            success: true
-        });
-    } catch (err) {
-        console.error(`❌ Gagal kirim media:`, err);
-        res.status(500).json({
-            error: 'Gagal mengirim media',
-            detail: err.message
-        });
-    }
-}
-
-export async function sendGroupMessage(req, res) {
-    const {
-        session,
-        groupName,
-        message
-    } = req.body;
-
-    // Validasi input
-    if (!session || !groupName || !message) {
-        return res.status(400).json({
-            error: 'Session, groupName, dan message diperlukan'
-        });
-    }
-
-    if (!clients.has(session)) {
-        return res.status(400).json({
-            error: 'Session tidak ditemukan'
-        });
-    }
-
-    try {
-        const client = clients.get(session);
-        const chats = await client.getChats();
-        const group = chats.find(chat => chat.isGroup && chat.name === groupName);
-
-        if (!group) {
-            return res.status(404).json({
-                error: `Grup "${groupName}" tidak ditemukan`
-            });
-        }
-
-        await group.sendMessage(message);
-
-        console.log(`💬 Pesan dikirim ke grup "${groupName}": ${message}`);
-        res.json({
-            success: true
-        });
-    } catch (err) {
-        console.error(`❌ Gagal kirim ke grup:`, err);
-        res.status(500).json({
-            error: 'Gagal kirim ke grup',
             detail: err.message
         });
     }
