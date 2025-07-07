@@ -3,6 +3,7 @@ import qrcode from 'qrcode';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import axios from 'axios';
+import multer from 'multer';
 import path from 'path';
 import {
     logToGateway
@@ -21,8 +22,12 @@ const {
     MessageMedia
 } = pkg;
 
+const upload = multer({
+    storage: multer.memoryStorage()
+});
 const clients = new Map();
 const qrCodes = new Map();
+global.qrCodes = qrCodes;
 let io = null;
 
 export function setSocketInstance(socketIoInstance) {
@@ -94,7 +99,7 @@ export async function startSession(req, res) {
             console.error('❌ Gagal kirim webhook:', err.message);
         }
     });
-    
+
     client.on('qr', async (qr) => {
         try {
             const qrImage = await qrcode.toDataURL(qr);
@@ -186,9 +191,31 @@ export async function startSession(req, res) {
     } catch (err) {
         console.error(`❌ Gagal initialize session ${sessionId}:`, err);
         res.status(500).json({
-            error: 'Gagal memulai sesi'
+            error: 'Gagal memulai sesi',
+            detail: err.message || err
         });
     }
+}
+
+export async function getSessionStatus(req, res) {
+    const sessionId = req.query.session;
+    if (!sessionId) {
+        return res.status(400).json({
+            error: 'Session ID diperlukan'
+        });
+    }
+
+    const session = global.sessions[sessionId];
+    if (!session) {
+        return res.status(404).json({
+            error: 'Session tidak ditemukan'
+        });
+    }
+
+    res.json({
+        session: sessionId,
+        status: session.status || 'unknown'
+    });
 }
 
 export async function sendMessage(req, res) {
@@ -286,7 +313,7 @@ export async function sendMedia(req, res) {
         await logToGateway({
             session,
             phone,
-            message,
+            message: caption || '[media]',
             type: 'text',
             status: 'success'
         });
@@ -298,7 +325,7 @@ export async function sendMedia(req, res) {
         await logToGateway({
             session,
             phone,
-            message,
+            message: caption || '[media]',
             type: 'text',
             status: 'failed'
         });
@@ -308,6 +335,70 @@ export async function sendMedia(req, res) {
         });
     }
 }
+
+export const sendMediaUpload = [
+    upload.single('file'),
+    async (req, res) => {
+        const {
+            session,
+            phone,
+            caption
+        } = req.body;
+        const file = req.file;
+
+        if (!session || !phone || !file) {
+            return res.status(400).json({
+                error: 'Session, phone, dan file wajib diisi'
+            });
+        }
+
+        if (!clients.has(session)) {
+            return res.status(400).json({
+                error: 'Session tidak ditemukan'
+            });
+        }
+
+        try {
+            const client = clients.get(session);
+
+            const media = new MessageMedia(
+                file.mimetype,
+                file.buffer.toString('base64'),
+                file.originalname
+            );
+
+            await client.sendMessage(`${phone}@c.us`, media, {
+                caption
+            });
+
+            console.log(`✅ File upload dikirim ke ${phone}: ${file.originalname}`);
+            await logToGateway({
+                session,
+                phone,
+                message: caption || `[file: ${file.originalname}]`,
+                type: 'file',
+                status: 'success'
+            });
+
+            res.json({
+                success: true
+            });
+        } catch (err) {
+            console.error('❌ Gagal kirim file upload:', err);
+            await logToGateway({
+                session,
+                phone,
+                message: caption || '[file]',
+                type: 'file',
+                status: 'failed'
+            });
+            res.status(500).json({
+                error: 'Gagal mengirim file',
+                detail: err.message
+            });
+        }
+    }
+];
 
 export async function sendGroupMessage(req, res) {
     const {
@@ -345,7 +436,7 @@ export async function sendGroupMessage(req, res) {
         console.log(`💬 Pesan dikirim ke grup "${groupName}": ${message}`);
         await logToGateway({
             session,
-            phone,
+            phone: groupName,
             message,
             type: 'text',
             status: 'success'
@@ -357,7 +448,7 @@ export async function sendGroupMessage(req, res) {
         console.error(`❌ Gagal kirim ke grup:`, err);
         await logToGateway({
             session,
-            phone,
+            phone: groupName,
             message,
             type: 'text',
             status: 'failed'
@@ -401,7 +492,7 @@ export async function logoutSession(req, res) {
         clients.delete(sessionId); // hapus client dari map
 
         const sessionPath = path.resolve('/sessions', sessionId);
-        if (fs.existsSync(sessionPath)) {
+        if (fs.existsSync(path.join(sessionPath, 'SingletonLock'))) {
             fs.rmSync(sessionPath, {
                 recursive: true,
                 force: true

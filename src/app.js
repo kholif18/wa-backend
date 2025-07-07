@@ -5,6 +5,9 @@ import {
 import {
     Server
 } from 'socket.io';
+import {
+    setSocketInstance
+} from './controllers/whatsappController.js';
 import dotenv from 'dotenv';
 import routes from './routes/index.js';
 import verifyApiSecret from './middleware/verifyApiSecret.js';
@@ -20,6 +23,41 @@ const io = new Server(server, {
 });
 
 global.io = io;
+setSocketInstance(io); // inject io ke whatsappController
+
+// Tambahkan handler ini setelah setSocketInstance(io)
+io.on('connection', (socket) => {
+    console.log("🔌 Socket client terhubung");
+
+    const sessionId = socket.handshake.query.session;
+    if (!sessionId) {
+        console.warn("⚠️ Tidak ada session ID di query socket");
+        return;
+    }
+
+    socket.join(sessionId);
+    console.log(`📡 Socket join room untuk session: ${sessionId}`);
+
+    const currentSession = global.sessions[sessionId];
+    if (currentSession) {
+        socket.emit('session:update', {
+            session: sessionId,
+            status: currentSession.status || 'unknown'
+        });
+
+        if (currentSession.status === 'qr' && global.qrCodes?.has(sessionId)) {
+            socket.emit('session:qr', {
+                session: sessionId,
+                qr: global.qrCodes.get(sessionId)
+            });
+        }
+    } else {
+        socket.emit('session:update', {
+            session: sessionId,
+            status: 'disconnected'
+        });
+    }
+});
 
 app.use(express.json());
 app.use(verifyApiSecret);
