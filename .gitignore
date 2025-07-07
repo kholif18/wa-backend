@@ -3,4 +3,5 @@
 /logs
 /sessions
 /docker-compose.yml
-/Dockerfile
+/DockerfileDockerfile
+docker-compose.yml
