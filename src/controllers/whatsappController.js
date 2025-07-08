@@ -11,6 +11,13 @@ import {
 import {
     isValidPhoneNumber
 } from 'libphonenumber-js';
+import {
+    fileURLToPath
+} from 'url';
+const __filename = fileURLToPath(
+    import.meta.url);
+const __dirname = path.dirname(__filename);
+
 
 dotenv.config();
 
@@ -51,7 +58,7 @@ export async function startSession(req, res) {
     const client = new Client({
         authStrategy: new LocalAuth({
             clientId: sessionId,
-            dataPath: '/sessions'
+            dataPath: path.join(__dirname, '../../sessions')
         }),
         puppeteer: {
             headless: 'new',
@@ -491,7 +498,7 @@ export async function logoutSession(req, res) {
         qrCodes.delete(sessionId); // hapus QR jika ada
         clients.delete(sessionId); // hapus client dari map
 
-        const sessionPath = path.resolve('/sessions', sessionId);
+        const sessionPath = path.resolve(__dirname, '../../sessions', sessionId);
         if (fs.existsSync(path.join(sessionPath, 'SingletonLock'))) {
             fs.rmSync(sessionPath, {
                 recursive: true,
