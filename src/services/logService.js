@@ -1,10 +1,17 @@
 import axios from 'axios';
 
 const gatewayUrl = process.env.R_GATEWAY_URL;
+const token = process.env.RGATEWAY_TOKEN;
 
-export async function logToGateway(session, phone, message, status) {
-    if (!gatewayUrl) {
-        console.error('❌ R_GATEWAY_URL belum diset di .env!');
+export async function logToGateway({
+    session,
+    phone,
+    message,
+    type = 'text',
+    status = 'success'
+}) {
+    if (!gatewayUrl || !token) {
+        console.error('❌ R_GATEWAY_URL atau RGATEWAY_TOKEN belum diset di .env!');
         return;
     }
 
@@ -14,14 +21,15 @@ export async function logToGateway(session, phone, message, status) {
             phone,
             message,
             type,
-            status
+            status,
         }, {
             headers: {
-                Authorization: `Bearer ${process.env.RGATEWAY_TOKEN}`
-            }
+                Authorization: `Bearer ${token}`,
+            },
         });
+
         console.log(`✅ Log dikirim ke r-gateway`);
     } catch (error) {
-        console.error(`❌ Gagal kirim log ke r-gateway`, error.message);
+        console.error(`❌ Gagal kirim log ke r-gateway:`, error.message);
     }
 }
