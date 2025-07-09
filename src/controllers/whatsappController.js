@@ -110,7 +110,8 @@ export async function startSession(req, res) {
     client.on('qr', async (qr) => {
         try {
             const qrImage = await qrcode.toDataURL(qr);
-            qrCodes.set(sessionId, qrImage);
+            if (!global.qrCodes) global.qrCodes = new Map();
+            global.qrCodes.set(sessionId, qrImage);
 
             if (global.sessions[sessionId]) {
                 global.sessions[sessionId].status = 'qr';
@@ -124,7 +125,7 @@ export async function startSession(req, res) {
             console.log(`✅ QR dikirim via socket untuk ${sessionId}`);
 
             setTimeout(() => {
-                qrCodes.delete(sessionId);
+                global.qrCodes.delete(sessionId);
                 console.log(`🗑 QR expired untuk ${sessionId}`);
             }, 60000);
         } catch (err) {
@@ -148,7 +149,9 @@ export async function startSession(req, res) {
             status: 'auth_failure'
         });
         clients.delete(sessionId);
-        qrCodes.delete(sessionId);
+        if (global.qrCodes?.has(sessionId)) {
+            global.qrCodes.delete(sessionId);
+        }
         console.warn(`❌ Auth failure: ${msg}`);
     });
 
@@ -171,7 +174,7 @@ export async function startSession(req, res) {
         }
 
         clients.delete(sessionId);
-        qrCodes.delete(sessionId);
+        global.qrCodes.delete(sessionId);
 
         if (reason !== 'LOGOUT') {
             console.log(`🔁 Restarting session ${sessionId} in 5s...`);
@@ -495,7 +498,7 @@ export async function logoutSession(req, res) {
         await session.client.destroy(); // matikan client
 
         delete global.sessions[sessionId]; // hapus dari memory
-        qrCodes.delete(sessionId); // hapus QR jika ada
+        global.qrCodes.delete(sessionId); // hapus QR jika ada
         clients.delete(sessionId); // hapus client dari map
 
         const sessionPath = path.resolve(__dirname, '../../sessions', sessionId);
