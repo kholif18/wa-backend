@@ -71,6 +71,12 @@ eval "$pm2StartupCmd"
 pm2 save
 
 # =========================
+# 🧹 Bersihkan sisa paket
+# =========================
+echo "🧹 Membersihkan paket yang tidak digunakan..."
+sudo apt autoremove -y
+
+# =========================
 # ✅ Info akhir
 # =========================
 IP=$(hostname -I | awk '{print $1}')
