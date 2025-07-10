@@ -135,11 +135,12 @@ export async function startSession(req, res) {
 
     client.on('ready', () => {
         global.sessions[sessionId].status = 'connected';
+        console.log(`✅ Status untuk ${sessionId} di-set ke:`, global.sessions[sessionId]);
+
         if (io) io.to(sessionId).emit('session:update', {
             session: sessionId,
             status: 'connected'
         });
-        console.log(`🔌 Session ${sessionId} connected`);
     });
 
     client.on('auth_failure', msg => {
@@ -221,6 +222,8 @@ export async function getSessionStatus(req, res) {
             error: 'Session tidak ditemukan'
         });
     }
+
+    console.log(`🟠 Status session ${sessionId}:`, session.status); // Tambahkan ini
 
     res.json({
         session: sessionId,
