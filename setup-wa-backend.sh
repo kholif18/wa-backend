@@ -40,9 +40,14 @@ sudo apt install -y \
 # =========================
 # 📁 Clone project
 # =========================
-cd ~
-git clone https://github.com/kholif18/wa-backend.git
-cd wa-backend
+if [ ! -d "$PROJECT_DIR" ]; then
+  echo "📦 Clone project wa-backend..."
+  git clone https://github.com/kholif18/wa-backend.git "$PROJECT_DIR"
+else
+  echo "✅ Folder wa-backend sudah ada, skip clone."
+fi
+
+cd "$PROJECT_DIR"
 
 # =========================
 # ⚙️ Generate .env file
