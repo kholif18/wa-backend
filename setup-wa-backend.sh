@@ -1,63 +1,43 @@
 #!/bin/bash
-
 set -e
 
-echo "🚀 Memulai setup WA Backend di Debian/Ubuntu..."
+echo "🚀 Setup WA Backend (tanpa clone) dimulai..."
 
 # =========================
-# 📦 Update dan install alat dasar
+# 📦 Install dependensi dasar
 # =========================
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git build-essential wget unzip
+sudo apt update && sudo apt install -y curl build-essential libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 libnss3 libatk1.0-0 libatk-bridge2.0-0 libdrm2 libgbm1 libxrandr2 libasound2 libpangocairo-1.0-0 libxss1 libgtk-3-0
 
 # =========================
-# 📦 Install Node.js 18.x
+# 📦 Install Node.js LTS (jika belum ada)
 # =========================
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# =========================
-# 🔁 Cek versi
-# =========================
-echo "📦 Node.js versi: $(node -v)"
-echo "📦 NPM versi: $(npm -v)"
+if ! command -v node >/dev/null 2>&1; then
+  echo "📦 Node.js belum ada, menginstal Node.js 18..."
+  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+  sudo apt install -y nodejs
+fi
 
 # =========================
 # 📦 Install PM2
 # =========================
-sudo npm install -g pm2
-
-# =========================
-# 🧱 Install Puppeteer dependencies
-# =========================
-sudo apt install -y \
-    libx11-dev libx11-xcb-dev libxcb-dri3-0 \
-    libxcomposite1 libxdamage1 libxi6 libxtst6 \
-    libnss3 libatk1.0-0 libatk-bridge2.0-0 \
-    libdrm2 libgbm1 libxrandr2 libasound2 \
-    libpangocairo-1.0-0 libxss1 libgtk-3-0
-
-# =========================
-# 📁 Clone project
-# =========================
-if [ ! -d "$PROJECT_DIR" ]; then
-  echo "📦 Clone project wa-backend..."
-  git clone https://github.com/kholif18/wa-backend.git "$PROJECT_DIR"
-else
-  echo "✅ Folder wa-backend sudah ada, skip clone."
+if ! command -v pm2 >/dev/null 2>&1; then
+  echo "📦 Menginstal PM2..."
+  sudo npm install -g pm2
 fi
 
-cd "$PROJECT_DIR"
+# =========================
+# 📁 Masuk ke folder wa-backend (harus sudah ada)
+# =========================
+cd "$(dirname "$0")"
 
 # =========================
-# ⚙️ Generate .env file
+# 📄 Generate .env
 # =========================
 API_SECRET=$(openssl rand -base64 32)
 PORT=3000
 CHROME_PATH="/usr/bin/google-chrome"
 SESSION_DIR="./sessions"
 
-# Buat folder session jika belum ada
 mkdir -p "$SESSION_DIR"
 chmod 755 "$SESSION_DIR"
 
@@ -73,23 +53,28 @@ EOF
 echo "✅ File .env berhasil dibuat."
 
 # =========================
-# 📦 Install dependencies
+# 📦 Install dependencies (jika belum)
 # =========================
-npm install
+if [ ! -d "node_modules" ]; then
+  echo "📦 Menjalankan npm install..."
+  npm install
+else
+  echo "✅ node_modules sudah ada, skip npm install."
+fi
 
 # =========================
-# ▶️ Jalankan dengan PM2
+# ▶️ Jalankan pakai PM2
 # =========================
 pm2 start src/app.js --name wa-backend
 pm2 startup systemd
 pm2 save
 
 # =========================
-# 📣 Informasi akhir
+# ✅ Info akhir
 # =========================
-IP_ADDR=$(hostname -I | awk '{print $1}')
+IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "✅ WA Backend berhasil dijalankan!"
-echo "🌐 URL     : http://$IP_ADDR:$PORT"
-echo "🔐 API Key : $API_SECRET"
+echo "🌐 Akses: http://$IP:$PORT"
+echo "🔐 API_SECRET: $API_SECRET"
 echo ""
