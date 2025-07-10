@@ -66,7 +66,8 @@ fi
 # ▶️ Jalankan pakai PM2
 # =========================
 pm2 start src/app.js --name wa-backend
-pm2 startup systemd
+pm2StartupCmd=$(pm2 startup systemd -u "$USER" --hp "$HOME" | tail -n 1)
+eval "$pm2StartupCmd"
 pm2 save
 
 # =========================
